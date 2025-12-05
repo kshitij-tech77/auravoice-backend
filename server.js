@@ -51,113 +51,56 @@ import OpenAI from "openai";
 dotenv.config();
 
 const app = express();
+const { twiml: TwilioTwiml } = twilio;
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Twilio helper
-const { twiml } = twilio;
-const VoiceResponse = twiml.VoiceResponse;
-
-// OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-// Middleware
 app.use(cors());
-app.use(express.urlencoded({ extended: false })); // for Twilio webhook (x-www-form-urlencoded)
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// Health check route
+// Health check
 app.get("/", (req, res) => {
   res.send("AURAVOICE backend running successfully 🚀");
 });
 
-/**
- * Twilio voice webhook
- * 1st hit: no SpeechResult -> greet + <Gather> speech
- * 2nd hit: has SpeechResult -> call OpenAI and respond
- */
+// ---- AI Voice Webhook ----
 app.post("/twilio/voice", async (req, res) => {
-  const vr = new VoiceResponse();
+  const vr = new TwilioTwiml.VoiceResponse();
 
-  const speech = req.body.SpeechResult;
-  const from = req.body.From;
-
-  console.log("Incoming call from:", from);
-  console.log("SpeechResult:", speech);
-
-  // ---- First request: ask the caller what they want ----
-  if (!speech) {
-    const gather = vr.gather({
-      input: "speech",
-      action: "/twilio/voice", // Twilio posts back here with SpeechResult
-      method: "POST",
-      speechTimeout: "auto",
-    });
-
-    gather.say(
-      {
-        voice: "Polly.Joanna",
-        language: "en-US",
-      },
-      "Hi, you have reached Aura Voice for Everest Grill and Wrap. " +
-        "How can I help you today? You can ask about hours, location, or menu items."
-    );
-
-    // Fallback if no speech at all
-    vr.say("Sorry, I did not hear anything. Goodbye.");
-    vr.hangup();
-
-    res.type("text/xml");
-    return res.send(vr.toString());
-  }
-
-  // ---- Second request: we have what the caller said ----
   try {
-    const userPrompt = `
-You are a friendly phone assistant for a restaurant called Everest Grill & Wrap in San Bernardino.
-Keep answers short, 2–3 sentences.
-If someone tries to place an order or reservation, say this is a demo line and they should call the real restaurant number.
-
-Caller said: "${speech}"
-`;
+    // 1) Build a prompt for OpenAI
+    const userText =
+      "Caller is a restaurant customer. Greet them warmly and ask how you can help.";
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4.1-mini",
       messages: [
         {
           role: "system",
-          content: "You are a helpful restaurant phone assistant.",
+          content:
+            "You are AURAVOICE, a friendly phone assistant for restaurants. " +
+            "Be short, clear, and speak like a human on a call.",
         },
-        { role: "user", content: userPrompt },
+        { role: "user", content: userText },
       ],
-      temperature: 0.4,
+      max_tokens: 120,
     });
 
-    const answer =
+    const aiReply =
       completion.choices[0].message.content ||
-      "Sorry, I am not sure how to answer that.";
+      "Hi, this is AURAVOICE. How can I help you today?";
 
-    console.log("OpenAI answer:", answer);
-
-    vr.say(
-      {
-        voice: "Polly.Joanna",
-        language: "en-US",
-      },
-      answer
-    );
-
-    vr.say("Thank you for calling. Goodbye.");
-    vr.hangup();
+    vr.say({ voice: "Polly.Joanna", language: "en-US" }, aiReply);
 
     res.type("text/xml");
     return res.send(vr.toString());
   } catch (err) {
     console.error("Error talking to OpenAI:", err);
 
-    vr.say("Sorry, something went wrong on our side.");
-    vr.hangup();
-
+    vr.say(
+      { voice: "Polly.Joanna", language: "en-US" },
+      "Sorry, something went wrong on our side. Please try again later."
+    );
     res.type("text/xml");
     return res.send(vr.toString());
   }
