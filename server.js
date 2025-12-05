@@ -68,7 +68,7 @@ app.post("/twilio/voice", (req, res) => {
       voice: "Polly.Joanna", // we can change voice later
       language: "en-US",
     },
-    "Hi! This is AuraVoice A I. Thanks for calling. How can I help you today?"
+    "Hi, this is Kshitij. How was your day? How can I help you, dear?"
   );
 
   res.type("text/xml");
