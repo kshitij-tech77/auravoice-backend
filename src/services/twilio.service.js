@@ -1,25 +1,25 @@
 // src/services/twilio.service.js
 import twilio from "twilio";
 import {
-  addAssistantMessage,
-  addUserMessage,
-  getMessages,
   getOrCreateConversation,
+  addUserMessage,
+  addAssistantMessage,
+  getMessages,
 } from "./conversation.service.js";
-import { getAiReply } from "./ai.service.js";
+import { getAssistantReply } from "./ai.service.js";
 
-const { twiml: TwilioTwiml } = twilio;
+const { twiml } = twilio;
 
 /**
- * Builds the initial TwiML response when the call first hits /twilio/voice.
+ * Build the initial TwiML when a call starts.
  */
 export function buildInitialVoiceTwiml(callSid) {
-  const vr = new TwilioTwiml.VoiceResponse();
-
-  // Ensure conversation exists
+  // Make sure conversation exists (adds system prompt)
   getOrCreateConversation(callSid);
 
-  const gather = vr.gather({
+  const response = new twiml.VoiceResponse();
+
+  const gather = response.gather({
     input: "speech",
     action: "/twilio/voice/handle-gather",
     method: "POST",
@@ -27,33 +27,30 @@ export function buildInitialVoiceTwiml(callSid) {
   });
 
   gather.say(
-    {
-      voice: "Polly.Joanna",
-      language: "en-US",
-    },
+    { voice: "Polly.Joanna", language: "en-US" },
     "Hey, this is AuraVoice, your friendly restaurant assistant. How can I help you today?"
   );
 
-  // In case nothing is heard, Twilio can redirect and try again
-  vr.redirect("/twilio/voice");
+  // If Twilio hears nothing, try again once
+  response.redirect("/twilio/voice");
 
-  return vr.toString();
+  return response.toString();
 }
 
 /**
- * Builds TwiML response after Twilio sends us speech input.
+ * Build TwiML after the user has spoken (Twilio /handle-gather).
  */
 export async function buildGatherResponseTwiml(callSid, userText) {
-  const vr = new TwilioTwiml.VoiceResponse();
+  const response = new twiml.VoiceResponse();
 
-  // If nothing said, apologize and ask again
+  // If Twilio didn’t detect speech
   if (!userText) {
-    vr.say(
+    response.say(
       { voice: "Polly.Joanna", language: "en-US" },
       "Sorry, I didn't catch that."
     );
 
-    const gather = vr.gather({
+    const gather = response.gather({
       input: "speech",
       action: "/twilio/voice/handle-gather",
       method: "POST",
@@ -65,53 +62,38 @@ export async function buildGatherResponseTwiml(callSid, userText) {
       "Can you please repeat your question?"
     );
 
-    return vr.toString();
+    return response.toString();
   }
 
-  console.log(`User (${callSid}) said:`, userText);
+  // 1) Save user message
+  addUserMessage(callSid, userText);
 
-  try {
-    // Add user message to conversation
-    addUserMessage(callSid, userText);
+  // 2) Get full history for this call
+  const messages = getMessages(callSid);
 
-    const messages = getMessages(callSid);
+  // 3) Ask OpenAI
+  const answer = await getAssistantReply(messages);
 
-    // Get AI reply
-    const answer = await getAiReply(messages);
+  // 4) Save assistant message
+  addAssistantMessage(callSid, answer);
 
-    console.log(`Assistant (${callSid}) answer:`, answer);
+  // 5) Say the answer
+  response.say({ voice: "Polly.Joanna", language: "en-US" }, answer);
 
-    // Save assistant message
-    addAssistantMessage(callSid, answer);
+  // 6) Ask if they need anything else and start another gather
+  response.pause({ length: 0.5 });
 
-    // Speak the answer
-    vr.say({ voice: "Polly.Joanna", language: "en-US" }, answer);
+  const gather = response.gather({
+    input: "speech",
+    action: "/twilio/voice/handle-gather",
+    method: "POST",
+    speechTimeout: "auto",
+  });
 
-    // Ask if they need anything else and listen again
-    vr.pause({ length: 0.5 });
+  gather.say(
+    { voice: "Polly.Joanna", language: "en-US" },
+    "Is there anything else I can help you with?"
+  );
 
-    const gather = vr.gather({
-      input: "speech",
-      action: "/twilio/voice/handle-gather",
-      method: "POST",
-      speechTimeout: "auto",
-    });
-
-    gather.say(
-      { voice: "Polly.Joanna", language: "en-US" },
-      "Is there anything else I can help you with?"
-    );
-
-    return vr.toString();
-  } catch (err) {
-    console.error("Error while generating AI reply:", err);
-
-    vr.say(
-      { voice: "Polly.Joanna", language: "en-US" },
-      "Sorry, something went wrong while answering your question. Please try again later."
-    );
-    vr.hangup();
-
-    return vr.toString();
-  }
+  return response.toString();
 }

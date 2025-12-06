@@ -1,37 +1,38 @@
 // src/controllers/voice.controller.js
 import {
-  buildGatherResponseTwiml,
   buildInitialVoiceTwiml,
+  buildGatherResponseTwiml,
 } from "../services/twilio.service.js";
 
 /**
- * Handles the initial Twilio webhook for an incoming call.
- * POST /twilio/voice
+ * Step 1: Twilio hits /twilio/voice when the call starts.
  */
-export const handleIncomingCall = (req, res, next) => {
+export function handleIncomingCall(req, res, next) {
   try {
-    const callSid = req.body.CallSid;
-    const xml = buildInitialVoiceTwiml(callSid);
+    const callSid = req.body.CallSid || "unknown-call";
 
-    res.type("text/xml").send(xml);
+    const twimlXml = buildInitialVoiceTwiml(callSid);
+
+    res.type("text/xml");
+    return res.send(twimlXml);
   } catch (err) {
-    next(err);
+    return next(err);
   }
-};
+}
 
 /**
- * Handles speech results from Twilio's <Gather>.
- * POST /twilio/voice/handle-gather
+ * Step 2: Twilio posts speech result to /twilio/voice/handle-gather.
  */
-export const handleGather = async (req, res, next) => {
+export async function handleGather(req, res, next) {
   try {
-    const callSid = req.body.CallSid;
+    const callSid = req.body.CallSid || "unknown-call";
     const userText = (req.body.SpeechResult || "").trim();
 
-    const xml = await buildGatherResponseTwiml(callSid, userText);
+    const twimlXml = await buildGatherResponseTwiml(callSid, userText);
 
-    res.type("text/xml").send(xml);
+    res.type("text/xml");
+    return res.send(twimlXml);
   } catch (err) {
-    next(err);
+    return next(err);
   }
-};
+}

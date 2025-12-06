@@ -1,10 +1,10 @@
 // src/controllers/test.controller.js
-import { testOpenAi } from "../services/ai.service.js";
 
 /**
  * GET /test/openai
  * Simple endpoint to verify OpenAI connectivity from the browser.
  */
+
 export const openAiTest = async (req, res) => {
   try {
     const reply = await testOpenAi();
